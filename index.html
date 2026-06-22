@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Simple Paint with Stamps</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 10px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .toolbar button, .toolbar input, .toolbar select {
+      padding: 6px 8px;
+      font-size: 14px;
+    }
+
+    #canvasContainer {
+      border: 1px solid #ccc;
+      touch-action: none; /* prevent scrolling while drawing on touch devices */
+    }
+
+    canvas {
+      display: block;
+      background: white;
+      width: 800px;
+      height: 500px;
+    }
+
+    @media (max-width: 900px) {
+      canvas { width: 95vw; height: 60vh; }
+    }
+  </style>
+</head>
+<body>
+  <h2>Simple Paint with Stamps</h2>
+
+  <div class="toolbar">
+    <label>Tool:
+      <select id="toolSelect">
+        <option value="brush">Brush</option>
+        <option value="eraser">Eraser</option>
+        <option value="stamp">Stamp</option>
+      </select>
+    </label>
+
+    <label>Color: <input type="color" id="colorPicker" value="#000000"></label>
+    <label>Brush: <input type="range" id="sizePicker" min="1" max="50" value="5"></label>
+
+    <label>Stamp shape:
+      <select id="stampShape">
+        <option value="circle">Circle</option>
+        <option value="square">Square</option>
+        <option value="star">Star</option>
+        <option value="heart">Heart</option>
+      </select>
+    </label>
+
+    <label>Stamp size: <input type="range" id="stampSize" min="8" max="200" value="40"></label>
+
+    <button id="clearBtn">Clear</button>
+    <button id="saveBtn">Save PNG</button>
+    <span id="status" style="margin-left:8px;color:#333;"></span>
+  </div>
+
+  <div id="canvasContainer">
+    <canvas id="paintCanvas" width="800" height="500"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('paintCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Resize canvas internal resolution to match CSS size for sharpness
+    function resizeCanvasToDisplaySize() {
+      const rect = canvas.getBoundingClientRect();
+      const ratio = window.devicePixelRatio || 1;
+      const w = Math.round(rect.width * ratio);
+      const h = Math.round(rect.height * ratio);
+      if (canvas.width !== w || canvas.height !== h) {
+        // copy current image
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        canvas.width = w;
+        canvas.height = h;
+        ctx.putImageData(img, 0, 0);
+        ctx.scale(ratio, ratio);
+      }
+    }
+
+    function initCanvasBg() {
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0); // reset transform
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    resizeCanvasToDisplaySize();
+    initCanvasBg();
+
+    // UI elements
+    const toolSelect = document.getElementById('toolSelect');
+    const colorPicker = document.getElementById('colorPicker');
+    const sizePicker = document.getElementById('sizePicker');
+    const stampShape = document.getElementById('stampShape');
+    const stampSize = document.getElementById('stampSize');
+    const clearBtn = document.getElementById('clearBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const status = document.getElementById('status');
+
+    let drawing = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    function setStatus(text) {
+      status.textContent = text;
+      setTimeout(() => { if (status.textContent === text) status.textContent = ''; }, 1200);
+    }
+
+    function getPointerPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      let clientX, clientY;
+      if (e.touches && e.touches.length) {
+        clientX = e.touches[0].clientX; clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX; clientY = e.clientY;
+      }
+      // map to canvas CSS pixels (not device pixels)
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+
+    // Drawing functions
+    function drawLine(x1, y1, x2, y2) {
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.lineWidth = sizePicker.value;
+      if (toolSelect.value === 'eraser') {
+        ctx.globalCompositeOperation = 'destination-out'; // erase
+        ctx.strokeStyle = 'rgba(0,0,0,1)';
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = colorPicker.value;
+      }
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.closePath();
+    }
+
+    // Stamp drawing helpers (centered at x,y; size is pixel size)
+    function drawStamp(x, y, size, shape, color) {
+      ctx.save();
+      ctx.fillStyle = color;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.translate(x, y);
+
+      if (shape === 'circle') {
+        ctx.beginPath();
+        ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+      } else if (shape === 'square') {
+        const s = size;
+        ctx.fillRect(-s/2, -s/2, s, s);
+      } else if (shape === 'star') {
+        // simple 5-point star
+        const outer = size / 2;
+        const inner = outer * 0.5;
+        ctx.beginPath();
+        for (let i = 0; i < 5; i++) {
+          const a = (Math.PI * 2 / 5) * i - Math.PI / 2;
+          ctx.lineTo(Math.cos(a) * outer, Math.sin(a) * outer);
+          const a2 = a + Math.PI / 5;
+          ctx.lineTo(Math.cos(a2) * inner, Math.sin(a2) * inner);
+        }
+        ctx.closePath();
+        ctx.fill();
+      } else if (shape === 'heart') {
+        // simple heart path
+        const s = size / 100; // scale factor
+        ctx.beginPath();
+        ctx.moveTo(0, -30 * s);
+        ctx.bezierCurveTo(25*s, -70*s, 75*s, -40*s, 0, 30*s);
+        ctx.bezierCurveTo(-75*s, -40*s, -25*s, -70*s, 0, -30*s);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.restore();
+    }
+
+    // Stamp image caching for sharp exports: we will draw stamps directly on main canvas (CSS coords)
+    // Pointer event handlers
+    function startPointer(e) {
+      e.preventDefault();
+      const pos = getPointerPos(e);
+      if (toolSelect.value === 'stamp') {
+        // place one stamp
+        drawStamp(pos.x, pos.y, Number(stampSize.value), stampShape.value, colorPicker.value);
+      } else {
+        drawing = true;
+        lastX = pos.x;
+        lastY = pos.y;
+        drawLine(lastX, lastY, lastX + 0.01, lastY + 0.01); // draw dot
+      }
+    }
+
+    function movePointer(e) {
+      if (!drawing) return;
+      e.preventDefault();
+      const pos = getPointerPos(e);
+      drawLine(lastX, lastY, pos.x, pos.y);
+      lastX = pos.x;
+      lastY = pos.y;
+    }
+
+    function endPointer(e) {
+      if (!drawing) return;
+      drawing = false;
+      ctx.beginPath();
+    }
+
+    // Mouse events
+    canvas.addEventListener('mousedown', startPointer);
+    canvas.addEventListener('mousemove', movePointer);
+    window.addEventListener('mouseup', endPointer);
+
+    // Touch events
+    canvas.addEventListener('touchstart', startPointer, {passive:false});
+    canvas.addEventListener('touchmove', movePointer, {passive:false});
+    window.addEventListener('touchend', endPointer);
+
+    // Clear and save
+    clearBtn.addEventListener('click', () => {
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      initCanvasBg();
+      ctx.restore();
+      setStatus('Cleared');
+    });
+
+    saveBtn.addEventListener('click', () => {
+      // create a temporary canvas at CSS size to export correct resolution
+      const rect = canvas.getBoundingClientRect();
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = rect.width;
+      exportCanvas.height = rect.height;
+      const ectx = exportCanvas.getContext('2d');
+
+      // draw the current canvas scaled to CSS pixels
+      ectx.fillStyle = 'white';
+      ectx.fillRect(0,0,exportCanvas.width, exportCanvas.height);
+      ectx.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+
+      const dataURL = exportCanvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = dataURL;
+      a.download = 'drawing.png';
+      a.click();
+      setStatus('Saved PNG');
+    });
+
+    // Resize handling (keeps content)
+    let resizeTimeout;
+    window.addEventListener('resize', () => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(() => {
+        const saved = document.createElement('canvas');
+        const rect = canvas.getBoundingClientRect();
+        saved.width = rect.width;
+        saved.height = rect.height;
+        saved.getContext('2d').drawImage(canvas, 0, 0, saved.width, saved.height);
+
+        resizeCanvasToDisplaySize();
+        initCanvasBg();
+
+        ctx.drawImage(saved, 0, 0, saved.width, saved.height, 0, 0, canvas.width / (window.devicePixelRatio||1), canvas.height / (window.devicePixelRatio||1));
+      }, 150);
+    });
+
+    // Keyboard shortcuts
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'e') { toolSelect.value = 'eraser'; setStatus('Eraser'); }
+      if (e.key === 'b') { toolSelect.value = 'brush'; setStatus('Brush'); }
+      if (e.key === 's') { toolSelect.value = 'stamp'; setStatus('Stamp'); }
+      if (e.key === 'c') { clearBtn.click(); }
+      if (e.key === '[') { sizePicker.value = Math.max(1, Number(sizePicker.value) - 1); }
+      if (e.key === ']') { sizePicker.value = Math.min(50, Number(sizePicker.value) + 1); }
+    });
+
+    setStatus('Ready');
+  </script>
+</body>
+</html>
